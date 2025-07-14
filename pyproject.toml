@@ -1,0 +1,15 @@
+[project]
+name = "bucklers-sf6-scraper"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "asyncio>=3.4.3",
+    "asynciolimiter>=1.2.0",
+    "dotenv>=0.9.9",
+    "httpx>=0.28.1",
+    "ipython>=9.4.0",
+    "rnet>=2.3.9",
+    "selectolax>=0.3.31",
+]
