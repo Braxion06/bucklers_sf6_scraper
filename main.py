@@ -1,14 +1,9 @@
 # %%
-import asyncio
 import json
 import os
-import time
 
 import dotenv
-from asynciolimiter import Limiter
 from httpx import Client, Response
-
-# from rnet import Client, Impersonate, Response
 from selectolax.parser import HTMLParser
 
 # %%
@@ -26,11 +21,6 @@ headers = {
 # %%
 def create_client(client_headers: dict) -> Client:
     return Client(headers=client_headers)
-
-
-#
-# def create_client(client_headers: dict) -> Client:
-#
 
 
 def make_request(cl: Client, target_url: str) -> Response:
@@ -54,7 +44,7 @@ def save_json(data: dict | list, path: str) -> None:
 def loop_over(client_headers: dict, target_url: str, path: str):  # -> list:
     client = create_client(client_headers)
     j_data = []
-    is_api = {target_url.endswith("json")}
+    is_api = target_url.endswith(".json")
     print(f"Target url is an API: {is_api}")
     for i in range(1, 11):
         loop_url = f"{target_url}?page={i}"
@@ -71,23 +61,17 @@ def loop_over(client_headers: dict, target_url: str, path: str):  # -> list:
         else:
             with open("err_res.txt", "w", encoding="utf-8") as file:
                 file.write(response.text)
-        time.sleep(0.5)
+            raise RuntimeError("Failed to fetch data")
+        # time.sleep(0.5)
     if len(j_data) > 0:
         save_json(j_data, path)
     # return j_data
 
 
+# Main function definition
 def main():
     loop_over(headers, url_api, "data/list_data.json")
 
 
 if __name__ == "__main__":
     main()
-
-# %%
-# client = create_client(headers)
-# response = make_request(client, url_api)
-# print(response.status_code)
-# print(response.json())
-#
-# %%
