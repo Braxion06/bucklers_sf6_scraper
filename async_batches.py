@@ -52,13 +52,12 @@ async def save_json_async(data: dict | list, path: str) -> None:
 
 
 # %%
-# TODO: Make this script write a JSONL (JSON Lines file)
 async def main():
     with open("data/async_batch.jsonl", "w", encoding="utf-8"):
         pass
     client = create_client(headers)
-    batch_size = 2
-    total_pages = 7
+    batch_size = 100
+    total_pages = 100
     num_batches = ceil(total_pages / batch_size)
     logging.info("Working with %d batches", num_batches)
     for batch in range(num_batches):

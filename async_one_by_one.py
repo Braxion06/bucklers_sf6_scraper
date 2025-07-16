@@ -62,7 +62,7 @@ async def fetch_data(
     is_last = page_number == last_page
     if response.status == 200:
         data = await response.json()
-        await save_json_async(data, "data/async_output.json", is_last)
+        await save_json_async(data, "data/async_one_by_one.json", is_last)
         # return await response.json()
     else:
         print(await response.text())
@@ -73,19 +73,19 @@ async def fetch_data(
 
 # %%
 async def main():
-    with open("data/async_output.json", "w", encoding="utf-8") as f:
+    with open("data/async_one_by_one.json", "w", encoding="utf-8") as f:
         # NOTE: This empties the file
         f.write("[")
     client = create_client(headers)
     # j_data = []
-    total_pages = 4
+    total_pages = 100
     tasks = [
         limiter.wrap(fetch_data(client, base_url, i, total_pages))
         for i in range(1, total_pages + 1)
     ]
     # j_data =
     await asyncio.gather(*tasks)
-    with open("data/async_output.json", "a", encoding="utf-8") as f:
+    with open("data/async_one_by_one.json", "a", encoding="utf-8") as f:
         # NOTE: This empties the file
         f.write("]")
 
