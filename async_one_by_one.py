@@ -86,7 +86,6 @@ async def main():
     # j_data =
     await asyncio.gather(*tasks)
     with open("data/async_one_by_one.json", "a", encoding="utf-8") as f:
-        # NOTE: This empties the file
         f.write("]")
 
 
