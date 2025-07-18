@@ -14,3 +14,6 @@ wheels/
 
 # Hot Data
 data
+
+# Log files
+logs
