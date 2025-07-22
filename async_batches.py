@@ -3,12 +3,13 @@ import asyncio
 import json
 import logging
 import os
+import random
 from math import ceil
 
 import aiofiles
 import dotenv
 from asynciolimiter import Limiter
-from rnet import Client, Impersonate, Response
+from rnet import Client, Impersonate, Proxy, Response
 from selectolax.parser import HTMLParser
 
 # %%
@@ -23,18 +24,43 @@ COOKIE = os.getenv("BUCKLER_COOKIE")
 web_url = "https://www.streetfighter.com/6/buckler/ranking/master"
 api_url = "https://www.streetfighter.com/6/buckler/_next/data/{{ buildId }}/en/ranking/master.json"
 headers = {
-    "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+    "Accept-Encoding": "gzip, deflate, br, zstd",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Cache-Control": "max-age=0",
     "Cookie": COOKIE,
-    # "Referer": "https://www.streetfighter.com/6/buckler/ranking/league?character_filter=1&character_id=luke&platform=1&user_status=1&home_filter=1&home_category_id=0&home_id=1&league_rank=0&page=1",
+    "Referer": "https://www.streetfighter.com/6/buckler/ranking/master?character_filter=1&character_id=luke&platform=1&user_status=1&home_filter=1&home_category_id=0&home_id=1&league_rank=0&page=1",
+    "Priority": "u=0, i",
+    "Sec-Ch-Ua": '"Not)A;Brand";v="8", "Chromium";v="137", "Google Chrome";v="137"',
+    "Sec-Ch-Ua-Mobile": "?0",
+    "Sec-Ch-Ua-Platform": '"Linux"',
+    "Sec-Fetch-Dest": "document",
+    "Sec-Fetch-Mode": "navigate",
+    "Sec-Fetch-Site": "same-origin",
+    "Sec-Fetch-User": "?1",
+    "Upgrade-Insecure-Requests": "1",
+    "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36",
 }
 # Requests per second
-limiter = Limiter(2.5)
+limiter = Limiter(1.2)
 
 
 # %%
-def create_client(client_headers: dict) -> Client:
+def read_proxies():
+    with open("reliable_proxies.txt", "r", encoding="utf-8") as f:
+        line_list = f.readlines()
+        return [line.strip() for line in line_list]
+
+
+def create_client(client_headers: dict, proxy_list: None | list = None) -> Client:
+    proxies = None
+    if proxy_list is not None:
+        proxies = [Proxy.http(proxy) for proxy in proxy_list]
     return Client(
-        impersonate=Impersonate.Firefox139, default_headers=client_headers, timeout=10
+        impersonate=Impersonate.Chrome137,
+        default_headers=client_headers,
+        timeout=30,
+        proxies=proxies,
     )
 
 
@@ -50,10 +76,8 @@ async def parse_web_request(resp: Response) -> dict:
 async def get_url_metadata(rclient: Client, url: str) -> tuple[str, int, int]:
     logging.info("Getting url metadata from %s", url)
     response = await rclient.get(url)
-    print(f"Status: {response.status}")
     if response.status == 200:
         json_data = await parse_web_request(response)
-        # print(json_data["props"]["pageProps"].keys())
         build_id = json_data["buildId"]
         total_pages = json_data["props"]["pageProps"]["master_rating_ranking"][
             "total_page"
@@ -61,19 +85,33 @@ async def get_url_metadata(rclient: Client, url: str) -> tuple[str, int, int]:
         total_placements = json_data["props"]["pageProps"]["master_rating_ranking"][
             "total_count"
         ]
+        print(f"Status: {response.status}\nMetadata: OK")
         return build_id, total_pages, total_placements
+    # FIXME: Improve the retry logic into a loop
+    if response.status in (502, 405):
+        print("Scraper got blocked will wait a minute and try again")
+        logging.error("Got blocked, retrying")
+        await asyncio.sleep(60)
+        return await get_url_metadata(rclient, url)
     raise RuntimeError(
         f"Failed to get metadata from {url}\nResponse status: {response.status_code}"
     )
 
 
-async def fetch_data(rclient: Client, url: str, page_number: int) -> dict:
+async def fetch_api_data(rclient: Client, url: str, page_number: int) -> dict:
     # logging.info("Fetching page %d", page_number)
     target_url = f"{url}?page={page_number}"
     response = await rclient.get(target_url)
     print(f"Status: {response.status}")
     if response.status == 200:
         return await response.json()
+    # FIXME: Improve the retry logic into a loop
+    if response.status in (502, 405):
+        print("Scraper got blocked will wait a minute and try again")
+        logging.error("Got blocked, retrying")
+        await asyncio.sleep(60)
+        retry_json = await fetch_api_data(rclient, url, page_number)
+        return retry_json
     raise RuntimeError(f"Failed to fetch data, response status: {response.status_code}")
 
 
@@ -90,16 +128,17 @@ def choose_batch_size(page_count: int) -> int:
         return 50
     if page_count < 1000:
         return 150
-    if page_count < 10000:
-        return 1000
-    return 1800
+    return 250
 
 
 # %%
 async def main() -> None:
+    logging.info("Starting buckler_scraper\n------------------------------------------")
     with open("data/async_batch.jsonl", "w", encoding="utf-8"):
         pass
-    client = create_client(headers)
+    plist = read_proxies()
+    # plist = None
+    client = create_client(headers, plist)
     current_build_id, total_pages, url_total_placements = await get_url_metadata(
         client, web_url
     )
@@ -109,21 +148,22 @@ async def main() -> None:
     logging.info("Total placements in endpoint: %s", url_total_placements)
     batch_size = choose_batch_size(total_pages)
     # batch_size = 3
-    total_pages = 10
+    # total_pages = 2000
     num_batches = ceil(total_pages / batch_size)
-    logging.info("Working with %d batches", num_batches)
+    logging.info("Working with %d batches of %d pages", num_batches, batch_size)
     for batch in range(num_batches):
         start_page = batch * batch_size + 1
         end_page = min((batch + 1) * batch_size, total_pages)
         logging.info(
             "Processing batch %d/%d, containing pages %d to %d",
             batch,
-            batch_size,
+            num_batches,
             start_page,
             end_page,
         )
+        await asyncio.sleep(random.uniform(0.2, 0.5))
         tasks = [
-            limiter.wrap(fetch_data(client, f_api_url, page))
+            limiter.wrap(fetch_api_data(client, f_api_url, page))
             for page in range(start_page, end_page + 1)
         ]
         batch_data = await asyncio.gather(*tasks)
