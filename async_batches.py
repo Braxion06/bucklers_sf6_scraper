@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import random
+import time
 from math import ceil
 
 import aiofiles
@@ -42,7 +43,7 @@ headers = {
     "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36",
 }
 # Requests per second
-limiter = Limiter(1.2)
+limiter = Limiter(1.5)
 
 
 # %%
@@ -74,45 +75,56 @@ async def parse_web_request(resp: Response) -> dict:
 
 
 async def get_url_metadata(rclient: Client, url: str) -> tuple[str, int, int]:
-    logging.info("Getting url metadata from %s", url)
-    response = await rclient.get(url)
-    if response.status == 200:
-        json_data = await parse_web_request(response)
-        build_id = json_data["buildId"]
-        total_pages = json_data["props"]["pageProps"]["master_rating_ranking"][
-            "total_page"
-        ]
-        total_placements = json_data["props"]["pageProps"]["master_rating_ranking"][
-            "total_count"
-        ]
-        print(f"Status: {response.status}\nMetadata: OK")
-        return build_id, total_pages, total_placements
-    # FIXME: Improve the retry logic into a loop
-    if response.status in (502, 405):
-        print("Scraper got blocked will wait a minute and try again")
-        logging.error("Got blocked, retrying")
-        await asyncio.sleep(60)
-        return await get_url_metadata(rclient, url)
-    raise RuntimeError(
-        f"Failed to get metadata from {url}\nResponse status: {response.status_code}"
-    )
+    retries = 5
+    wait = 30
+    for attempt in range(1, retries + 1):
+        try:
+            logging.info("Getting url metadata from %s", url)
+            response = await rclient.get(url)
+            if response.status == 200:
+                json_data = await parse_web_request(response)
+                build_id = json_data["buildId"]
+                total_pages = json_data["props"]["pageProps"]["master_rating_ranking"][
+                    "total_page"
+                ]
+                total_placements = json_data["props"]["pageProps"][
+                    "master_rating_ranking"
+                ]["total_count"]
+                print(f"Status: {response.status}\nMetadata: OK")
+                return build_id, total_pages, total_placements
+            if response.status in (502, 405):
+                print("Scraper blocked, waiting")
+                logging.error("Scraper blocked, waiting")
+                time.sleep(wait)
+                wait *= 2
+            else:
+                raise RuntimeError(
+                    f"Failed to get metadata from {url}\nResponse status: {response.status}"
+                )
+        except Exception as e:
+            logging.exception("Failed attempt %d with exception %s", attempt, str(e))
+    raise RuntimeError("Failed all retries on fetching metadata")
 
 
 async def fetch_api_data(rclient: Client, url: str, page_number: int) -> dict:
-    # logging.info("Fetching page %d", page_number)
-    target_url = f"{url}?page={page_number}"
-    response = await rclient.get(target_url)
-    print(f"Status: {response.status}")
-    if response.status == 200:
-        return await response.json()
-    # FIXME: Improve the retry logic into a loop
-    if response.status in (502, 405):
-        print("Scraper got blocked will wait a minute and try again")
-        logging.error("Got blocked, retrying")
-        await asyncio.sleep(60)
-        retry_json = await fetch_api_data(rclient, url, page_number)
-        return retry_json
-    raise RuntimeError(f"Failed to fetch data, response status: {response.status_code}")
+    retries = 5
+    wait = 30
+    for attempt in range(1, retries + 1):
+        try:
+            target_url = f"{url}?page={page_number}"
+            response = await rclient.get(target_url)
+            print(f"Page: {page_number} - Status: {response.status}")
+            if response.status == 200:
+                return await response.json()
+            if response.status in (405, 502):
+                print("Scraper blocked, waiting")
+                logging.error("Scraper blocked, waiting")
+                time.sleep(wait)
+                wait *= 2
+        except Exception as e:
+            logging.exception("Failed attempt %d with exception", attempt)
+
+    raise RuntimeError("Failed all retries on fetching metadata")
 
 
 async def save_json_async(data: dict | list, path: str) -> None:
@@ -125,10 +137,10 @@ async def save_json_async(data: dict | list, path: str) -> None:
 
 def choose_batch_size(page_count: int) -> int:
     if page_count < 100:
-        return 50
+        return 60
     if page_count < 1000:
-        return 150
-    return 250
+        return 180
+    return 500
 
 
 # %%
@@ -137,25 +149,26 @@ async def main() -> None:
     with open("data/async_batch.jsonl", "w", encoding="utf-8"):
         pass
     plist = read_proxies()
-    # plist = None
+    # NOTE: Uncomment to turn off proxies
+    plist = None
     client = create_client(headers, plist)
     current_build_id, total_pages, url_total_placements = await get_url_metadata(
         client, web_url
     )
+    # total_pages = 2000 # Hardcoded
     f_api_url = api_url.replace("{{ buildId }}", current_build_id)
     logging.info("Working API endpoint: %s", f_api_url)
     logging.info("Total pages in endpoint: %s", total_pages)
     logging.info("Total placements in endpoint: %s", url_total_placements)
     batch_size = choose_batch_size(total_pages)
-    # batch_size = 3
-    # total_pages = 2000
+    # batch_size = 3 # Hardcoded
     num_batches = ceil(total_pages / batch_size)
     logging.info("Working with %d batches of %d pages", num_batches, batch_size)
     for batch in range(num_batches):
         start_page = batch * batch_size + 1
         end_page = min((batch + 1) * batch_size, total_pages)
         logging.info(
-            "Processing batch %d/%d, containing pages %d to %d",
+            "Processing batch %d/%d: pages %d - %d",
             batch,
             num_batches,
             start_page,
