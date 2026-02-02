@@ -22,9 +22,9 @@ logging.basicConfig(
 dotenv.load_dotenv()
 COOKIE = os.getenv("BUCKLER_COOKIE")
 # july 17 build ZPYRiawhkQ08LZvpMzOtP
-web_url = "https://www.streetfighter.com/6/buckler/ranking/master"
-api_url = "https://www.streetfighter.com/6/buckler/_next/data/{{ buildId }}/en/ranking/master.json"
-headers = {
+WEB_URL = "https://www.streetfighter.com/6/buckler/ranking/master"
+API_URL = "https://www.streetfighter.com/6/buckler/_next/data/{{ buildId }}/en/ranking/master.json"
+HEADERS = {
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
     "Accept-Encoding": "gzip, deflate, br, zstd",
     "Accept-Language": "en-US,en;q=0.9",
@@ -43,7 +43,7 @@ headers = {
     "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36",
 }
 # Requests per second
-limiter = Limiter(1.5)
+limiter = Limiter(1.2)
 
 
 # %%
@@ -74,23 +74,31 @@ async def parse_web_request(resp: Response) -> dict:
     return json.loads(parsed_data)
 
 
-async def get_url_metadata(rclient: Client, url: str) -> tuple[str, int, int]:
+async def get_url_metadata(
+    rclient: Client, url: str, path: str | None, save_example: bool = True
+) -> tuple[str, int, int]:
     retries = 5
-    wait = 30
+    wait = 40
     for attempt in range(1, retries + 1):
         try:
             logging.info("Getting url metadata from %s", url)
             response = await rclient.get(url)
+            print(f"Status: {response.status}")
             if response.status == 200:
-                json_data = await parse_web_request(response)
-                build_id = json_data["buildId"]
-                total_pages = json_data["props"]["pageProps"]["master_rating_ranking"][
-                    "total_page"
-                ]
-                total_placements = json_data["props"]["pageProps"][
+                parsed_data = await parse_web_request(response)
+                if save_example and path is not None:
+                    async with aiofiles.open(path, "w", encoding="utf-8") as f:
+                        json_str = json.dumps(parsed_data, indent=2)
+                        await f.write(json_str)
+                    print(f"Data saved in {path}")
+                build_id = parsed_data["buildId"]
+                total_pages = parsed_data["props"]["pageProps"][
+                    "master_rating_ranking"
+                ]["total_page"]
+                total_placements = parsed_data["props"]["pageProps"][
                     "master_rating_ranking"
                 ]["total_count"]
-                print(f"Status: {response.status}\nMetadata: OK")
+                print("Metadata: OK")
                 return build_id, total_pages, total_placements
             if response.status in (502, 405):
                 print("Scraper blocked, waiting")
@@ -106,24 +114,31 @@ async def get_url_metadata(rclient: Client, url: str) -> tuple[str, int, int]:
     raise RuntimeError("Failed all retries on fetching metadata")
 
 
-async def fetch_api_data(rclient: Client, url: str, page_number: int) -> dict:
+async def fetch_api_data(
+    rclient: Client, url: str, page_number: int, rankings_only: bool
+) -> dict:
     retries = 5
-    wait = 30
+    wait = 40
     for attempt in range(1, retries + 1):
         try:
             target_url = f"{url}?page={page_number}"
             response = await rclient.get(target_url)
             print(f"Page: {page_number} - Status: {response.status}")
             if response.status == 200:
-                return await response.json()
+                if rankings_only:
+                    data = await response.json()
+                    return data["pageProps"]["master_rating_ranking"][
+                        "ranking_fighter_list"
+                    ]
+                if not rankings_only:
+                    return await response.json()
             if response.status in (405, 502):
                 print("Scraper blocked, waiting")
                 logging.error("Scraper blocked, waiting")
                 time.sleep(wait)
                 wait *= 2
-        except Exception as e:
-            logging.exception("Failed attempt %d with exception", attempt)
-
+        except Exception:
+            logging.error("Failed attempt %d with exception", attempt)
     raise RuntimeError("Failed all retries on fetching metadata")
 
 
@@ -150,13 +165,13 @@ async def main() -> None:
         pass
     plist = read_proxies()
     # NOTE: Uncomment to turn off proxies
-    plist = None
-    client = create_client(headers, plist)
+    # plist = None
+    client = create_client(HEADERS, plist)
     current_build_id, total_pages, url_total_placements = await get_url_metadata(
-        client, web_url
+        client, WEB_URL, "data/whole_request_example.json"
     )
-    # total_pages = 2000 # Hardcoded
-    f_api_url = api_url.replace("{{ buildId }}", current_build_id)
+    total_pages = 100  # Hardcoded
+    f_api_url = API_URL.replace("{{ buildId }}", current_build_id)
     logging.info("Working API endpoint: %s", f_api_url)
     logging.info("Total pages in endpoint: %s", total_pages)
     logging.info("Total placements in endpoint: %s", url_total_placements)
@@ -176,7 +191,7 @@ async def main() -> None:
         )
         await asyncio.sleep(random.uniform(0.2, 0.5))
         tasks = [
-            limiter.wrap(fetch_api_data(client, f_api_url, page))
+            limiter.wrap(fetch_api_data(client, f_api_url, page, True))
             for page in range(start_page, end_page + 1)
         ]
         batch_data = await asyncio.gather(*tasks)
