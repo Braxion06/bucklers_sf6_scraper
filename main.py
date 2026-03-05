@@ -170,6 +170,7 @@ async def main() -> None:
     current_build_id, total_pages, url_total_placements = await get_url_metadata(
         client, WEB_URL, "data/whole_request_example.json"
     )
+    # NOTE: Uncomment to only read 100 pages
     # total_pages = 100  # Hardcoded
     f_api_url = API_URL.replace("{{ buildId }}", current_build_id)
     logging.info("Working API endpoint: %s", f_api_url)
