@@ -164,14 +164,14 @@ async def main() -> None:
     with open("data/async_batch.jsonl", "w", encoding="utf-8"):
         pass
     plist = read_proxies()
-    # NOTE: Uncomment to turn off proxies
-    # plist = None
+    # NOTE: Uncomment to to not use proxies
+    plist = None
     client = create_client(HEADERS, plist)
     current_build_id, total_pages, url_total_placements = await get_url_metadata(
         client, WEB_URL, "data/whole_request_example.json"
     )
     # NOTE: Uncomment to only read 100 pages
-    # total_pages = 100  # Hardcoded
+    total_pages = 100  # Hardcoded
     f_api_url = API_URL.replace("{{ buildId }}", current_build_id)
     logging.info("Working API endpoint: %s", f_api_url)
     logging.info("Total pages in endpoint: %s", total_pages)
