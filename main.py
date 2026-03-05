@@ -19,9 +19,11 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)s - %(message)s",
     filename="logs/buckler_scraper.log",
 )
+# Prepare environment
 dotenv.load_dotenv()
+os.makedirs("data", exist_ok=True)
 COOKIE = os.getenv("BUCKLER_COOKIE")
-# july 17 build ZPYRiawhkQ08LZvpMzOtP
+# july 17 2025 build ZPYRiawhkQ08LZvpMzOtP
 WEB_URL = "https://www.streetfighter.com/6/buckler/ranking/master"
 API_URL = "https://www.streetfighter.com/6/buckler/_next/data/{{ buildId }}/en/ranking/master.json"
 HEADERS = {
@@ -75,7 +77,7 @@ async def parse_web_request(resp: Response) -> dict:
 
 
 async def get_url_metadata(
-    rclient: Client, url: str, path: str | None, save_example: bool = True
+    rclient: Client, url: str, path: str | None = None, save_example: bool = False
 ) -> tuple[str, int, int]:
     retries = 5
     wait = 40
@@ -168,7 +170,8 @@ async def main() -> None:
     plist = None
     client = create_client(HEADERS, plist)
     current_build_id, total_pages, url_total_placements = await get_url_metadata(
-        client, WEB_URL, "data/whole_request_example.json"
+        client,
+        WEB_URL,  # "data/whole_request_example.json", True
     )
     # NOTE: Uncomment to only read 100 pages
     total_pages = 100  # Hardcoded
