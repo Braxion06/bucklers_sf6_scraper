@@ -5,6 +5,7 @@ import logging
 import os
 import random
 import time
+from datetime import date
 from math import ceil
 
 import aiofiles
@@ -144,7 +145,7 @@ async def fetch_api_data(
     raise RuntimeError("Failed all retries on fetching metadata")
 
 
-async def save_json_async(data: dict | list, path: str) -> None:
+async def save_json_async(data: list, path: str) -> None:
     async with aiofiles.open(path, "a", encoding="utf-8") as f:
         for item in data:
             json_str = json.dumps(item)
@@ -162,7 +163,7 @@ def choose_batch_size(page_count: int) -> int:
 
 # %%
 async def main() -> None:
-    logging.info("Starting buckler_scraper\n------------------------------------------")
+    logging.info("--------------------- Starting buckler_scraper --------------------")
     with open("data/async_batch.jsonl", "w", encoding="utf-8"):
         pass
     plist = read_proxies()
@@ -170,17 +171,17 @@ async def main() -> None:
     plist = None
     client = create_client(HEADERS, plist)
     current_build_id, total_pages, url_total_placements = await get_url_metadata(
-        client,
-        WEB_URL,  # "data/whole_request_example.json", True
+        client, WEB_URL, "data/whole_request_example.json", True
     )
     # NOTE: Uncomment to only read 100 pages
     total_pages = 100  # Hardcoded
-    f_api_url = API_URL.replace("{{ buildId }}", current_build_id)
-    logging.info("Working API endpoint: %s", f_api_url)
+    final_api_url = API_URL.replace("{{ buildId }}", current_build_id)
+    logging.info("Working API endpoint: %s", final_api_url)
     logging.info("Total pages in endpoint: %s", total_pages)
     logging.info("Total placements in endpoint: %s", url_total_placements)
     batch_size = choose_batch_size(total_pages)
-    # batch_size = 3 # Hardcoded
+    # NOTE: Uncomment to limit batch to 3
+    batch_size = 3  # Hardcoded
     num_batches = ceil(total_pages / batch_size)
     logging.info("Working with %d batches of %d pages", num_batches, batch_size)
     for batch in range(num_batches):
@@ -195,11 +196,11 @@ async def main() -> None:
         )
         await asyncio.sleep(random.uniform(0.2, 0.5))
         tasks = [
-            limiter.wrap(fetch_api_data(client, f_api_url, page, True))
+            limiter.wrap(fetch_api_data(client, final_api_url, page, True))
             for page in range(start_page, end_page + 1)
         ]
         batch_data = await asyncio.gather(*tasks)
-        await save_json_async(batch_data, "data/async_batch.jsonl")
+        await save_json_async(batch_data, f"data/bucklers-data-{date.today()}.jsonl")
     logging.info("Scraping finished")
 
 
