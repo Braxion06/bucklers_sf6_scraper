@@ -167,20 +167,20 @@ async def main() -> None:
     with open("data/async_batch.jsonl", "w", encoding="utf-8"):
         pass
     plist = read_proxies()
-    # NOTE: Uncomment to to not use proxies
+    # NOTE: Comment to to use proxies
     plist = None
     client = create_client(HEADERS, plist)
     current_build_id, total_pages, url_total_placements = await get_url_metadata(
         client, WEB_URL, "data/whole_request_example.json", True
     )
-    # NOTE: Uncomment to only read 100 pages
+    # NOTE: Comment to (unlock) read more than 100 pages
     total_pages = 100  # Hardcoded
     final_api_url = API_URL.replace("{{ buildId }}", current_build_id)
     logging.info("Working API endpoint: %s", final_api_url)
     logging.info("Total pages in endpoint: %s", total_pages)
     logging.info("Total placements in endpoint: %s", url_total_placements)
     batch_size = choose_batch_size(total_pages)
-    # NOTE: Uncomment to limit batch to 3
+    # NOTE: Comment to unlock batch size
     batch_size = 3  # Hardcoded
     num_batches = ceil(total_pages / batch_size)
     logging.info("Working with %d batches of %d pages", num_batches, batch_size)
