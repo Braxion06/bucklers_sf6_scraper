@@ -51,9 +51,12 @@ limiter = Limiter(1.2)
 
 # %%
 def read_proxies():
-    with open("reliable_proxies.txt", "r", encoding="utf-8") as f:
-        line_list = f.readlines()
-        return [line.strip() for line in line_list]
+    if os.path.exists("reliable_proxies.txt"):
+        with open("reliable_proxies.txt", "r", encoding="utf-8") as f:
+            line_list = f.readlines()
+            return [line.strip() for line in line_list]
+    else:
+        print("Did not found reliable_proxies.txt")
 
 
 def create_client(client_headers: dict, proxy_list: None | list = None) -> Client:
@@ -104,8 +107,8 @@ async def get_url_metadata(
                 print("Metadata: OK")
                 return build_id, total_pages, total_placements
             if response.status in (502, 405):
-                print("Scraper blocked, waiting")
-                logging.error("Scraper blocked, waiting")
+                print(f"Scraper blocked, waiting for {wait} seconds")
+                logging.error("Scraper blocked, waiting for %d seconds", wait)
                 time.sleep(wait)
                 wait *= 2
             else:
@@ -136,8 +139,9 @@ async def fetch_api_data(
                 if not rankings_only:
                     return await response.json()
             if response.status in (405, 502):
-                print("Scraper blocked, waiting")
-                logging.error("Scraper blocked, waiting")
+                print(f"Scraper blocked, waiting for {wait} seconds")
+                logging.error("Scraper blocked, waiting for %d seconds", wait)
+                # NOTE: Pause the entire script
                 time.sleep(wait)
                 wait *= 2
         except Exception:
@@ -158,7 +162,7 @@ def choose_batch_size(page_count: int) -> int:
         return 60
     if page_count < 1000:
         return 180
-    return 500
+    return 300
 
 
 # %%
@@ -181,26 +185,29 @@ async def main() -> None:
     logging.info("Total placements in endpoint: %s", url_total_placements)
     batch_size = choose_batch_size(total_pages)
     # NOTE: Comment to unlock batch size
-    batch_size = 3  # Hardcoded
+    batch_size = 50  # Hardcoded
     num_batches = ceil(total_pages / batch_size)
     logging.info("Working with %d batches of %d pages", num_batches, batch_size)
+    process_date = date.today()
     for batch in range(num_batches):
+        # NOTE: Taking into account zero indexing, adding 1 to batch
         start_page = batch * batch_size + 1
         end_page = min((batch + 1) * batch_size, total_pages)
         logging.info(
             "Processing batch %d/%d: pages %d - %d",
-            batch,
+            batch + 1,
             num_batches,
             start_page,
             end_page,
         )
-        await asyncio.sleep(random.uniform(0.2, 0.5))
+        # NOTE: Pause the current task
+        await asyncio.sleep(random.uniform(0.2, 0.6))
         tasks = [
             limiter.wrap(fetch_api_data(client, final_api_url, page, True))
             for page in range(start_page, end_page + 1)
         ]
         batch_data = await asyncio.gather(*tasks)
-        await save_json_async(batch_data, f"data/bucklers-data-{date.today()}.jsonl")
+        await save_json_async(batch_data, f"data/bucklers-data-{process_date}.jsonl")
     logging.info("Scraping finished")
 
 
