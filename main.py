@@ -24,9 +24,8 @@ logging.basicConfig(
 dotenv.load_dotenv()
 os.makedirs("data", exist_ok=True)
 COOKIE = os.getenv("BUCKLER_COOKIE")
-# july 17 2025 build ZPYRiawhkQ08LZvpMzOtP
-WEB_URL = "https://www.streetfighter.com/6/buckler/ranking/master"
-API_URL = "https://www.streetfighter.com/6/buckler/_next/data/{{ buildId }}/en/ranking/master.json"
+WEB_URL = "https://www.streetfighter.com/6/buckler/ranking/{{ ranking_type }}"
+API_URL = "https://www.streetfighter.com/6/buckler/_next/data/{{ buildId }}/en/ranking/{{ ranking_type }}.json"
 HEADERS = {
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
     "Accept-Encoding": "gzip, deflate, br, zstd",
@@ -81,8 +80,19 @@ async def parse_web_request(resp: Response) -> dict:
 
 
 async def get_url_metadata(
-    rclient: Client, url: str, path: str | None = None, save_example: bool = False
+    rclient: Client,
+    url: str,
+    ranking_endpoint: str,
+    path: str | None = None,
+    save_file: bool = False,
 ) -> tuple[str, int, int]:
+    if ranking_endpoint not in ("master", "league"):
+        raise ValueError("Ranking type must be either ranking or league")
+    if ranking_endpoint == "master":
+        ladder = "master_rating_ranking"
+    else:
+        ladder = "league_point_ranking"
+    url = url.replace("{{ ranking_type }}", ranking_endpoint)
     retries = 5
     wait = 40
     for attempt in range(1, retries + 1):
@@ -91,20 +101,18 @@ async def get_url_metadata(
             response = await rclient.get(url)
             print(f"Status: {response.status}")
             if response.status == 200:
+                print(f"Mode: {ranking_endpoint} - Metadata: OK")
                 parsed_data = await parse_web_request(response)
-                if save_example and path is not None:
+                if save_file and path is not None:
                     async with aiofiles.open(path, "w", encoding="utf-8") as f:
                         json_str = json.dumps(parsed_data, indent=2)
                         await f.write(json_str)
-                    print(f"Data saved in {path}")
+                    print(f"Metadata saved in {path}")
                 build_id = parsed_data["buildId"]
-                total_pages = parsed_data["props"]["pageProps"][
-                    "master_rating_ranking"
-                ]["total_page"]
-                total_placements = parsed_data["props"]["pageProps"][
-                    "master_rating_ranking"
-                ]["total_count"]
-                print("Metadata: OK")
+                total_pages = parsed_data["props"]["pageProps"][ladder]["total_page"]
+                total_placements = parsed_data["props"]["pageProps"][ladder][
+                    "total_count"
+                ]
                 return build_id, total_pages, total_placements
             if response.status in (502, 405):
                 print(f"Scraper blocked, waiting for {wait} seconds")
@@ -116,13 +124,26 @@ async def get_url_metadata(
                     f"Failed to get metadata from {url}\nResponse status: {response.status}"
                 )
         except Exception as e:
-            logging.exception("Failed attempt %d with exception %s", attempt, str(e))
+            logging.exception(
+                "Failed metadata attempt %d with exception %s", attempt, str(e)
+            )
     raise RuntimeError("Failed all retries on fetching metadata")
 
 
 async def fetch_api_data(
-    rclient: Client, url: str, page_number: int, rankings_only: bool
+    rclient: Client,
+    url: str,
+    ranking_endpoint: str,
+    page_number: int,
+    rankings_only: bool,
 ) -> dict:
+    if ranking_endpoint not in ("master", "league"):
+        raise ValueError("Ranking type must be either ranking or league")
+    if ranking_endpoint == "master":
+        ladder = "master_rating_ranking"
+    else:
+        ladder = "league_point_ranking"
+    url = url.replace("{{ ranking_type }}", ranking_endpoint)
     retries = 5
     wait = 40
     for attempt in range(1, retries + 1):
@@ -133,19 +154,17 @@ async def fetch_api_data(
             if response.status == 200:
                 if rankings_only:
                     data = await response.json()
-                    return data["pageProps"]["master_rating_ranking"][
-                        "ranking_fighter_list"
-                    ]
-                if not rankings_only:
+                    return data["pageProps"][ladder]["ranking_fighter_list"]
+                else:
                     return await response.json()
             if response.status in (405, 502):
                 print(f"Scraper blocked, waiting for {wait} seconds")
                 logging.error("Scraper blocked, waiting for %d seconds", wait)
                 # NOTE: Pause the entire script
                 time.sleep(wait)
-                wait *= 2
+                wait = min(wait * 2, 300)
         except Exception:
-            logging.error("Failed attempt %d with exception", attempt)
+            logging.error("Failed api_data attempt %d with exception", attempt)
     raise RuntimeError("Failed all retries on fetching metadata")
 
 
@@ -167,28 +186,57 @@ def choose_batch_size(page_count: int) -> int:
 
 # %%
 async def main() -> None:
-    logging.info("--------------------- Starting buckler_scraper --------------------")
-    with open("data/async_batch.jsonl", "w", encoding="utf-8"):
-        pass
+    process_date = date.today()
+    # NOTE: Should be either "master" for master rate or "league" for league points
+    endpoint = "master"
+    if endpoint not in ("master", "league"):
+        raise ValueError("Endpoint must be either ranking or league")
+    logging.info("---------------- Starting buckler_sf6_scraper ---------------")
+    logging.info("Endpoint chosen: %s", endpoint)
+    print("----- Starting bucklers_sf6_scraper -----")
+    print(f"Endpoint chosen: {endpoint}")
     plist = read_proxies()
     # NOTE: Comment to to use proxies
     plist = None
     client = create_client(HEADERS, plist)
-    current_build_id, total_pages, url_total_placements = await get_url_metadata(
-        client, WEB_URL, "data/whole_request_example.json", True
+    # NOTE: Call both endpoints but only use the last one
+    master_build_id, master_pages, master_placements = await get_url_metadata(
+        client,
+        WEB_URL,
+        "master",
+        f"data/full-response-master-{process_date}.json",
+        True,
     )
+    league_build_id, league_pages, league_placements = await get_url_metadata(
+        client,
+        WEB_URL,
+        "league",
+        f"data/full-response-league-{process_date}.json",
+        True,
+    )
+    if endpoint == "master":
+        current_build_id = master_build_id
+        total_pages = master_pages
+        url_total_placements = master_placements
+    else:
+        current_build_id = league_build_id
+        total_pages = league_pages
+        url_total_placements = league_placements
     # NOTE: Comment to (unlock) read more than 100 pages
     total_pages = 100  # Hardcoded
-    final_api_url = API_URL.replace("{{ buildId }}", current_build_id)
-    logging.info("Working API endpoint: %s", final_api_url)
-    logging.info("Total pages in endpoint: %s", total_pages)
-    logging.info("Total placements in endpoint: %s", url_total_placements)
+    api_url_w_build = API_URL.replace("{{ buildId }}", current_build_id)
+    logging.info(
+        "Working API %s endpoint: %s",
+        endpoint,
+        api_url_w_build.replace("{{ ranking_type }}", endpoint),
+    )
+    logging.info("Total pages in %s endpoint: %s", endpoint, total_pages)
+    logging.info("Total placements in %s endpoint : %s", endpoint, url_total_placements)
     batch_size = choose_batch_size(total_pages)
     # NOTE: Comment to unlock batch size
     batch_size = 50  # Hardcoded
     num_batches = ceil(total_pages / batch_size)
     logging.info("Working with %d batches of %d pages", num_batches, batch_size)
-    process_date = date.today()
     for batch in range(num_batches):
         # NOTE: Taking into account zero indexing, adding 1 to batch
         start_page = batch * batch_size + 1
@@ -203,11 +251,13 @@ async def main() -> None:
         # NOTE: Pause the current task
         await asyncio.sleep(random.uniform(0.2, 0.6))
         tasks = [
-            limiter.wrap(fetch_api_data(client, final_api_url, page, True))
+            limiter.wrap(fetch_api_data(client, api_url_w_build, endpoint, page, True))
             for page in range(start_page, end_page + 1)
         ]
         batch_data = await asyncio.gather(*tasks)
-        await save_json_async(batch_data, f"data/bucklers-data-{process_date}.jsonl")
+        await save_json_async(
+            batch_data, f"data/bucklers-data-{endpoint}-{process_date}.jsonl"
+        )
     logging.info("Scraping finished")
 
 
