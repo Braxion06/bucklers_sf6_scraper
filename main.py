@@ -1,4 +1,5 @@
 # %%
+import argparse
 import asyncio
 import json
 import logging
@@ -14,12 +15,6 @@ from asynciolimiter import Limiter
 from rnet import Client, Impersonate, Proxy, Response
 from selectolax.parser import HTMLParser
 
-# %%
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)s - %(message)s",
-    filename="logs/buckler_scraper.log",
-)
 # Prepare environment
 dotenv.load_dotenv()
 os.makedirs("data", exist_ok=True)
@@ -45,10 +40,9 @@ HEADERS = {
     "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36",
 }
 # Requests per second
-limiter = Limiter(1.2)
+limiter = Limiter(1.4)
 
 
-# %%
 def read_proxies():
     if os.path.exists("reliable_proxies.txt"):
         with open("reliable_proxies.txt", "r", encoding="utf-8") as f:
@@ -184,13 +178,19 @@ def choose_batch_size(page_count: int) -> int:
     return 300
 
 
-# %%
 async def main() -> None:
     process_date = date.today()
-    # NOTE: Should be either "master" for master rate or "league" for league points
-    endpoint = "master"
+    parser = argparse.ArgumentParser()
+    parser.add_argument("endpoint", type=str, default="master")
+    arguments = parser.parse_args()
+    endpoint = arguments.endpoint
     if endpoint not in ("master", "league"):
         raise ValueError("Endpoint must be either ranking or league")
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s - %(message)s",
+        filename=f"logs/bucklers_scraper_{endpoint}.log",
+    )
     logging.info("---------------- Starting buckler_sf6_scraper ---------------")
     logging.info("Endpoint chosen: %s", endpoint)
     print("----- Starting bucklers_sf6_scraper -----")
@@ -223,7 +223,7 @@ async def main() -> None:
         total_pages = league_pages
         url_total_placements = league_placements
     # NOTE: Comment to (unlock) read more than 100 pages
-    total_pages = 100  # Hardcoded
+    total_pages = 500  # Hardcoded
     api_url_w_build = API_URL.replace("{{ buildId }}", current_build_id)
     logging.info(
         "Working API %s endpoint: %s",
