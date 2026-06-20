@@ -1,4 +1,3 @@
-# %%
 import argparse
 import asyncio
 import json
@@ -10,17 +9,17 @@ from datetime import date
 from math import ceil
 
 import aiofiles
-import dotenv
 from asynciolimiter import Limiter
+from dotenv import load_dotenv
 from rnet import Client, Impersonate, Proxy, Response
 from selectolax.parser import HTMLParser
 
 # Prepare environment
-dotenv.load_dotenv()
+load_dotenv()
 os.makedirs("data", exist_ok=True)
 COOKIE = os.getenv("BUCKLER_COOKIE")
-WEB_URL = "https://www.streetfighter.com/6/buckler/ranking/{{ ranking_type }}"
-API_URL = "https://www.streetfighter.com/6/buckler/_next/data/{{ buildId }}/en/ranking/{{ ranking_type }}.json"
+LADDER_WEB_URL = "https://www.streetfighter.com/6/buckler/ranking/{{ ranking_type }}"
+LADDER_API_URL = "https://www.streetfighter.com/6/buckler/_next/data/{{ buildId }}/en/ranking/{{ ranking_type }}.json"
 HEADERS = {
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
     "Accept-Encoding": "gzip, deflate, br, zstd",
@@ -40,7 +39,7 @@ HEADERS = {
     "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36",
 }
 # Requests per second
-limiter = Limiter(1.4)
+limiter = Limiter(1.1)
 
 
 def read_proxies():
@@ -81,7 +80,7 @@ async def get_url_metadata(
     save_file: bool = False,
 ) -> tuple[str, int, int]:
     if ranking_endpoint not in ("master", "league"):
-        raise ValueError("Ranking type must be either ranking or league")
+        raise ValueError("Ranking type must be either master or league")
     if ranking_endpoint == "master":
         ladder = "master_rating_ranking"
     else:
@@ -124,7 +123,7 @@ async def get_url_metadata(
     raise RuntimeError("Failed all retries on fetching metadata")
 
 
-async def fetch_api_data(
+async def fetch_ladder_api_data(
     rclient: Client,
     url: str,
     ranking_endpoint: str,
@@ -132,7 +131,7 @@ async def fetch_api_data(
     rankings_only: bool,
 ) -> dict:
     if ranking_endpoint not in ("master", "league"):
-        raise ValueError("Ranking type must be either ranking or league")
+        raise ValueError("Ranking type must be either master or league")
     if ranking_endpoint == "master":
         ladder = "master_rating_ranking"
     else:
@@ -185,7 +184,7 @@ async def main() -> None:
     arguments = parser.parse_args()
     endpoint = arguments.endpoint
     if endpoint not in ("master", "league"):
-        raise ValueError("Endpoint must be either ranking or league")
+        raise ValueError("Endpoint must be either master or league")
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s - %(message)s",
@@ -196,20 +195,19 @@ async def main() -> None:
     print("----- Starting bucklers_sf6_scraper -----")
     print(f"Endpoint chosen: {endpoint}")
     plist = read_proxies()
-    # NOTE: Comment to to use proxies
+    # NOTE: Comment to use proxies
     plist = None
     client = create_client(HEADERS, plist)
-    # NOTE: Call both endpoints but only use the last one
     master_build_id, master_pages, master_placements = await get_url_metadata(
         client,
-        WEB_URL,
+        LADDER_WEB_URL,
         "master",
         f"data/full-response-master-{process_date}.json",
         True,
     )
     league_build_id, league_pages, league_placements = await get_url_metadata(
         client,
-        WEB_URL,
+        LADDER_WEB_URL,
         "league",
         f"data/full-response-league-{process_date}.json",
         True,
@@ -222,9 +220,9 @@ async def main() -> None:
         current_build_id = league_build_id
         total_pages = league_pages
         url_total_placements = league_placements
-    # NOTE: Comment to (unlock) read more than 100 pages
+    # NOTE: Comment to unlock total pages (read more than 500 pages)
     total_pages = 500  # Hardcoded
-    api_url_w_build = API_URL.replace("{{ buildId }}", current_build_id)
+    api_url_w_build = LADDER_API_URL.replace("{{ buildId }}", current_build_id)
     logging.info(
         "Working API %s endpoint: %s",
         endpoint,
@@ -248,10 +246,12 @@ async def main() -> None:
             start_page,
             end_page,
         )
-        # NOTE: Pause the current task
-        await asyncio.sleep(random.uniform(0.2, 0.6))
+        # NOTE: Introduce jitter pausing the current task
+        await asyncio.sleep(random.uniform(0.2, 0.7))
         tasks = [
-            limiter.wrap(fetch_api_data(client, api_url_w_build, endpoint, page, True))
+            limiter.wrap(
+                fetch_ladder_api_data(client, api_url_w_build, endpoint, page, True)
+            )
             for page in range(start_page, end_page + 1)
         ]
         batch_data = await asyncio.gather(*tasks)
